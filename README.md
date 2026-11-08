@@ -28,7 +28,7 @@ pip install yfinance pandas numpy
 
 ## Run Backtest
 ```bash
-python3 backtest.py
+python3 backtest_loop.py
 ```
 
 ### Execution workflow
