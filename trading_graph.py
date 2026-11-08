@@ -223,7 +223,7 @@ class TradingGraph:
                 model=model,
                 temperature=temperature,
                 api_key=api_key,
-                base_url="https://api.deepseek.com/v1", 
+                base_url="https://api.deepseek.com", 
             )
         elif provider == "anthropic":
             # ChatAnthropic handles SystemMessage extraction automatically
