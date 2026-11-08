@@ -28,18 +28,41 @@ def calculate_metrics(trade_list, initial_capital=10000):
         "max_drawdown": round(max_drawdown, 4)
     }
 
-def run_single_backtest(window_size=20, ticker="BTC-USD", period="30d", interval="4h"):
-    df = yf.download(ticker, period=period, interval=interval, progress=False)
-    df = df[["Open", "High", "Low", "Close"]].copy()
+def run_single_backtest(window_size=50, ticker="BTC-USD", period="3mo", interval="4h"):
+    df = yf.download(ticker, period=period, interval=interval, auto_adjust=True, progress=False)
+    if isinstance(df.columns, pd.MultiIndex):
+        df.columns = df.columns.get_level_values(0)
+    df = df.reset_index()
+    df = df.rename(columns={"Date": "Datetime"})
+
     graph = TradingGraph(DEFAULT_CONFIG)
     position = None
     entry_price = None
     trade_records = []
+
     for i in range(window_size, len(df)):
-        window_data = df.iloc[i-window_size:i]
-        res = graph.run(window_data)
+        window_df = df.iloc[i-window_size:i]
+        # 组装和main里一模一样的kline_dict
+        kline_dict = {
+            "Datetime": window_df["Datetime"].dt.strftime("%Y-%m-%d %H:%M:%S").tolist(),
+            "Open": window_df["Open"].tolist(),
+            "High": window_df["High"].tolist(),
+            "Low": window_df["Low"].tolist(),
+            "Close": window_df["Close"].tolist(),
+            "Volume": window_df["Volume"].tolist(),
+        }
+        initial_state = {
+            "kline_data": kline_dict,
+            "analysis_results": None,
+            "messages": [],
+            "time_frame": "4hour",
+            "stock_name": "BTC",
+        }
+        final_state = graph.graph.invoke(initial_state)
+        res = final_state.get("final_trade_decision")
         decision = res["decision"]
         current_price = float(df.iloc[i]["Close"])
+
         if position is None:
             if decision == "LONG":
                 position = "LONG"
