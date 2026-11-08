@@ -45,18 +45,18 @@ def create_final_trade_decider(llm):
             - Default to the **dominant trendline slope** (e.g., SHORT in descending channel).
             - Do not guess direction — choose the **more defensible** side.
             5. Suggest a reasonable **risk-reward ratio** between **1.2 and 1.8**, based on current volatility and trend strength.
-
+            6. Assign a confidence score (0 ~ 1) to reflect how confident you are in this directional prediction. Higher confidence means the technical evidence is consistent and strong.
             ---
             ### 🧠 Output Format in json(for system parsing):
 
             ```
             {{
             "forecast_horizon": "Predicting next 3 candlestick (15 minutes, 1 hour, etc.)",
-            "decision": "<LONG or SHORT>",
+            "decision": "",
+            "confidence": "<float between 0 and 1>",
             "justification": "<Concise, confirmed reasoning based on reports>",
-            "risk_reward_ratio": "<float between 1.2 and 1.8>",
+            "risk_reward_ratio": "<float between 1.2 and 1.8>"
             }}
-
             --------
             **Technical Indicator Report**  
             {indicator_report}
