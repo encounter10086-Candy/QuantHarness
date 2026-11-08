@@ -358,3 +358,45 @@ class TradingGraph:
         
         # Refresh the LLMs with the new API key
         self.refresh_llms()
+
+if __name__ == "__main__":
+    import yfinance as yf
+    import pandas as pd
+    from trading_graph import TradingGraph
+
+    print("Fetching real data from Yahoo Finance...")
+    df = yf.download(tickers="BTC-USD", period="3mo", interval="4h", auto_adjust=True)
+
+    if isinstance(df.columns, pd.MultiIndex):
+        df.columns = df.columns.get_level_values(0)
+    
+    df = df.reset_index()
+    df = df.rename(columns={"Date": "Datetime"})
+    
+    df_tail = df.tail(50)
+
+    kline_dict = {
+        "Datetime": df_tail["Datetime"].dt.strftime("%Y-%m-%d %H:%M:%S").tolist(),
+        "Open": df_tail["Open"].tolist(),
+        "High": df_tail["High"].tolist(),
+        "Low": df_tail["Low"].tolist(),
+        "Close": df_tail["Close"].tolist(),
+        "Volume": df_tail["Volume"].tolist(),
+    }
+
+    initial_state = {
+        "kline_data": kline_dict,
+        "analysis_results": None,
+        "messages": [],
+        "time_frame": "4hour",
+        "stock_name": "BTC",
+    }
+
+    print("Initializing TradingGraph...")
+    tg = TradingGraph()
+    print("Running analysis...")
+    try:
+        final_state = tg.graph.invoke(initial_state)    
+        print(final_state.get("final_trade_decision"))
+    except Exception as e:
+        print(f"{e}")
