@@ -1,96 +1,168 @@
-# backtest_loop.py
-import yfinance as yf
-import pandas as pd
-import numpy as np
+"""
+backtest loop
+"""
 import json
+import re
+import time
+import numpy as np
+import pandas as pd
+import yfinance as yf
+
 from trading_graph import TradingGraph
 from default_config import DEFAULT_CONFIG
 
-def calculate_metrics(trade_list, initial_capital=10000):
-    if len(trade_list) == 0:
-        return {"cumulative_return": 0, "win_rate": 0, "max_drawdown": 0}
-    capital = initial_capital
-    capital_history = [capital]
-    win_count = 0
-    for trade in trade_list:
-        pct_pnl = trade["pnl_pct"]
-        capital = capital * (1 + pct_pnl)
-        capital_history.append(capital)
-        if pct_pnl > 0:
-            win_count += 1
-    cumulative_return = (capital - initial_capital) / initial_capital
-    win_rate = win_count / len(trade_list)
-    peak = np.maximum.accumulate(capital_history)
-    drawdown = (capital_history - peak) / peak
-    max_drawdown = np.min(drawdown)
-    return {
-        "cumulative_return": round(cumulative_return, 4),
-        "win_rate": round(win_rate, 4),
-        "max_drawdown": round(max_drawdown, 4)
-    }
+TICKER = "BTC-USD"
+PERIOD = "15d"       
+INTERVAL = "4h"
+WINDOW_SIZE = 50      
+STEP = 8              
+REPEAT = 3             
+INITIAL_CAPITAL = 10000.0
+TIME_FRAME = "4hour"
+STOCK_NAME = "BTC"
 
-def run_single_backtest(window_size=50, ticker="BTC-USD", period="3mo", interval="4h"):
-    df = yf.download(ticker, period=period, interval=interval, auto_adjust=True, progress=False)
+def fetch_ohlc():
+    print(f"Fetching {TICKER} {INTERVAL} data for {PERIOD}...")
+    df = yf.download(tickers=TICKER, period=PERIOD, interval=INTERVAL, auto_adjust=True)
+    if df is None or df.empty:
+        raise RuntimeError("yfinance returned empty data, aborting.")
     if isinstance(df.columns, pd.MultiIndex):
         df.columns = df.columns.get_level_values(0)
     df = df.reset_index()
-    df = df.rename(columns={"Date": "Datetime"})
+    if "Datetime" not in df.columns and "Date" in df.columns:
+        df = df.rename(columns={"Date": "Datetime"})
+    df = df.dropna(subset=["Open", "High", "Low", "Close"]).reset_index(drop=True)
+    print(f"Loaded {len(df)} candles from {df['Datetime'].iloc[0]} to {df['Datetime'].iloc[-1]}")
+    return df
 
-    graph = TradingGraph(DEFAULT_CONFIG)
-    position = None
+def build_state(window_df):
+    kline_dict = {
+        "Datetime": window_df["Datetime"].dt.strftime("%Y-%m-%d %H:%M:%S").tolist(),
+        "Open": window_df["Open"].tolist(),
+        "High": window_df["High"].tolist(),
+        "Low": window_df["Low"].tolist(),
+        "Close": window_df["Close"].tolist(),
+        "Volume": window_df["Volume"].tolist(),
+    }
+    return {
+        "kline_data": kline_dict,
+        "analysis_results": None,
+        "messages": [],
+        "time_frame": TIME_FRAME,
+        "stock_name": STOCK_NAME,
+    }
+
+def parse_decision(raw):
+    if isinstance(raw, dict):
+        return str(raw.get("decision", "HOLD")).upper()
+    if not isinstance(raw, str):
+        return "HOLD"
+    text = raw.strip()
+    try:
+        obj = json.loads(text)
+    except Exception:
+        m = re.search(r"\{[\s\S]*\}", text)
+        if not m:
+            return "HOLD"
+        try:
+            obj = json.loads(m.group(0))
+        except Exception:
+            return "HOLD"
+    return str(obj.get("decision", "HOLD")).upper()
+
+def compute_metrics(trade_pnls, equity_curve, initial_capital=INITIAL_CAPITAL):
+    if len(trade_pnls) == 0:
+        return {"cumulative_return": 0.0, "win_rate": 0.0, "max_drawdown": 0.0, "n_trades": 0}
+    cum_return = equity_curve[-1] / initial_capital - 1.0
+    win_rate = sum(1 for p in trade_pnls if p > 0) / len(trade_pnls)
+    peak = np.maximum.accumulate(np.array(equity_curve))
+    dd = (np.array(equity_curve) - peak) / peak
+    max_dd = float(dd.min()) if len(dd) else 0.0
+    return {
+        "cumulative_return": round(float(cum_return), 4),
+        "win_rate": round(float(win_rate), 4),
+        "max_drawdown": round(max_dd, 4),
+        "n_trades": len(trade_pnls),
+    }
+
+def run_single_backtest(df, tg, run_id=1):
+    capital = INITIAL_CAPITAL
+    equity_curve = [capital]
+    trade_pnls = []
+    position = None          
     entry_price = None
-    trade_records = []
+    start = WINDOW_SIZE
+    stops = list(range(start, len(df), STEP))
+    print(f"[run {run_id}] {len(stops)} decision points to evaluate...")
 
-    for i in range(window_size, len(df)):
-        window_df = df.iloc[i-window_size:i]
-        kline_dict = {
-            "Datetime": window_df["Datetime"].dt.strftime("%Y-%m-%d %H:%M:%S").tolist(),
-            "Open": window_df["Open"].tolist(),
-            "High": window_df["High"].tolist(),
-            "Low": window_df["Low"].tolist(),
-            "Close": window_df["Close"].tolist(),
-            "Volume": window_df["Volume"].tolist(),
-        }
-        initial_state = {
-            "kline_data": kline_dict,
-            "analysis_results": None,
-            "messages": [],
-            "time_frame": "4hour",
-            "stock_name": "BTC",
-        }
-        final_state = graph.graph.invoke(initial_state)
-        res_str = final_state.get("final_trade_decision")
-        res = json.loads(res_str)
-        decision = res["decision"]
-        current_price = float(df.iloc[i]["Close"])
+    for n, i in enumerate(stops, 1):
+        window_df = df.iloc[i - WINDOW_SIZE:i]
+        state = build_state(window_df)
+        try:
+            final_state = tg.graph.invoke(state)
+            decision = parse_decision(final_state.get("final_trade_decision"))
+        except Exception as e:
+            print(f"[run {run_id}] step {n}/{len(stops)} failed: {e} -- skip")
+            continue
+
+        price = float(df.iloc[i]["Close"])
 
         if position is None:
             if decision == "LONG":
-                position = "LONG"
-                entry_price = current_price
+                position, entry_price = "LONG", price
             elif decision == "SHORT":
-                position = "SHORT"
-                entry_price = current_price
+                position, entry_price = "SHORT", price
         else:
-            if (position == "LONG" and decision == "SHORT") or (position == "SHORT" and decision == "LONG"):
-                if position == "LONG":
-                    pnl = (current_price - entry_price) / entry_price
-                else:
-                    pnl = (entry_price - current_price) / entry_price
-                trade_records.append({"pnl_pct": pnl})
-                position = None
-                entry_price = None
-    metrics = calculate_metrics(trade_records)
-    return metrics
+            exit_now = (
+                (position == "LONG" and decision == "SHORT")
+                or (position == "SHORT" and decision == "LONG")
+            )
+            if exit_now:
+                pnl = (price - entry_price) / entry_price
+                if position == "SHORT":
+                    pnl = -pnl
+                capital *= (1.0 + pnl)
+                trade_pnls.append(pnl)
+                equity_curve.append(capital)
+                position, entry_price = None, None
+
+        if n % 10 == 0 or n == len(stops):
+            print(f"[run {run_id}] {n}/{len(stops)} done | decision={decision} "
+                  f"| trades={len(trade_pnls)} | equity={capital:.2f}")
+        time.sleep(0.3)  
+        
+    if position is not None:
+        price = float(df.iloc[-1]["Close"])
+        pnl = (price - entry_price) / entry_price
+        if position == "SHORT":
+            pnl = -pnl
+        capital *= (1.0 + pnl)
+        trade_pnls.append(pnl)
+        equity_curve.append(capital)
+
+    return compute_metrics(trade_pnls, equity_curve)
 
 if __name__ == "__main__":
-    repeat_times = 5
+    df = fetch_ohlc()
+    tg = TradingGraph(DEFAULT_CONFIG)
+
     all_results = []
-    for run_id in range(repeat_times):
-        print(f"===== Backtest run {run_id+1}/{repeat_times} =====")
-        metric = run_single_backtest()
-        print(metric)
-        all_results.append(metric)
-    print("\n===== All 5 runs result =====")
-    for item in all_results:
-        print(item)
+    for r in range(1, REPEAT + 1):
+        print(f"\n===== Backtest run {r}/{REPEAT} =====")
+        metrics = run_single_backtest(df, tg, run_id=r)
+        print(f"[run {r}] {metrics}")
+        all_results.append(metrics)
+
+    print("\n===== Summary over {} runs =====".format(REPEAT))
+    for idx, m in enumerate(all_results, 1):
+        print(f"run {idx}: {m}")
+
+    keys = ["cumulative_return", "win_rate", "max_drawdown", "n_trades"]
+    print("\n----- mean / std -----")
+    for k in keys:
+        vals = np.array([m[k] for m in all_results], dtype=float)
+        print(f"{k}: mean={vals.mean():.4f}  std={vals.std():.4f}")
+
+    with open("backtest_results.json", "w") as f:
+        json.dump(all_results, f, indent=2)
+    print("\nSaved raw results to backtest_results.json")
