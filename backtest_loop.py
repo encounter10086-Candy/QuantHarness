@@ -2,6 +2,7 @@
 import yfinance as yf
 import pandas as pd
 import numpy as np
+import json
 from trading_graph import TradingGraph
 from default_config import DEFAULT_CONFIG
 
@@ -42,7 +43,6 @@ def run_single_backtest(window_size=50, ticker="BTC-USD", period="3mo", interval
 
     for i in range(window_size, len(df)):
         window_df = df.iloc[i-window_size:i]
-        # 组装和main里一模一样的kline_dict
         kline_dict = {
             "Datetime": window_df["Datetime"].dt.strftime("%Y-%m-%d %H:%M:%S").tolist(),
             "Open": window_df["Open"].tolist(),
@@ -59,7 +59,8 @@ def run_single_backtest(window_size=50, ticker="BTC-USD", period="3mo", interval
             "stock_name": "BTC",
         }
         final_state = graph.graph.invoke(initial_state)
-        res = final_state.get("final_trade_decision")
+        res_str = final_state.get("final_trade_decision")
+        res = json.loads(res_str)
         decision = res["decision"]
         current_price = float(df.iloc[i]["Close"])
 
