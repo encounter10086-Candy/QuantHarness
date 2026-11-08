@@ -29,22 +29,22 @@ class SetGraph:
         # Create analyst nodes
         agent_nodes = {}
         tool_nodes = {}
-        all_agents = ["indicator", "pattern", "trend"]
+        all_agents = ["indicator"]
 
         # create nodes for indicator agent
         agent_nodes["indicator"] = create_indicator_agent(self.graph_llm, self.toolkit)
         # tool_nodes["indicator"] = self.tool_nodes["indicator"]
 
         # create nodes for pattern agent
-        agent_nodes["pattern"] = create_pattern_agent(
-            self.agent_llm, self.graph_llm, self.toolkit
-        )
+        # agent_nodes["pattern"] = create_pattern_agent(
+        #    self.agent_llm, self.graph_llm, self.toolkit
+        # )
         # tool_nodes["pattern"] = self.tool_nodes["pattern"]
 
         # create nodes for trend agent
-        agent_nodes["trend"] = create_trend_agent(
-            self.agent_llm, self.graph_llm, self.toolkit
-        )
+        # agent_nodes["trend"] = create_trend_agent(
+        #    self.agent_llm, self.graph_llm, self.toolkit
+        # )
         # tool_nodes["trend"] = self.tool_nodes["trend"]
 
         # create nodes for decision agent
